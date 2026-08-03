@@ -40,3 +40,7 @@ google-key.json
 gen-lang-client-*.json
 *-key.json
 
+# Temporary Vite configs
+electron.vite.config.*.mjs
+
+

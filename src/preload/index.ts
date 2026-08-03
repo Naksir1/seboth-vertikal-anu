@@ -257,9 +257,15 @@ const api = {
             mimeType: string;
         }): Promise<{ success: boolean; url?: string; error?: string }> =>
             ipcRenderer.invoke('cloud:upload-file', params),
+
+        uploadSession: (params: any): Promise<APIResponse<{ sessionId: string; status: string; message?: string }>> =>
+            ipcRenderer.invoke('cloud:upload-session', params),
             
         getQueue: (): Promise<APIResponse<any[]>> =>
-            ipcRenderer.invoke('cloud:get-queue')
+            ipcRenderer.invoke('cloud:get-queue'),
+
+        syncNow: (): Promise<APIResponse<{ synced: number; remaining: number }>> =>
+            ipcRenderer.invoke('cloud:sync-now')
     },
 
     // Queue APIs (Website Queue Integration)

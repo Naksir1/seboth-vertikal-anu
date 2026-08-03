@@ -282,7 +282,7 @@ function CaptureSession(): JSX.Element {
             // Stop the camera live view to release mirror/resources
             // BUT: Only stop live view if we are actually navigating away from the capture page,
             // to prevent mirror drop and COM port resets during component re-renders/HMR.
-            if (config.cameraMode === 'edsdk' || config.cameraMode === 'ptp') {
+            if ((config.cameraMode === 'edsdk' || config.cameraMode === 'ptp') && !config.selectedCameraId) {
                 const isStillOnCapture = window.location.pathname === '/capture' || window.location.hash.startsWith('#/capture');
                 if (!isStillOnCapture) {
                     console.log('[CaptureSession] Navigating away from /capture. Stopping DSLR live view...');
@@ -293,7 +293,7 @@ function CaptureSession(): JSX.Element {
             }
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [config.cameraMode])
+    }, [config.cameraMode, config.selectedCameraId])
 
     // Unified camera and live preview stream initialization sequence
     useEffect(() => {
@@ -1140,6 +1140,13 @@ function CaptureSession(): JSX.Element {
                             </motion.div>
                         )}
                     </AnimatePresence>
+
+                    {/* Safe area overlay: left/right black bars and transparent center */}
+                    <div className={styles.safeAreaOverlay} aria-hidden>
+                        <div className={styles.leftBar} style={{ width: safeArea.left }} />
+                        <div className={styles.rightBar} style={{ left: safeArea.left + safeArea.width, width: safeArea.left }} />
+                        <div className={styles.centerBox} style={{ left: safeArea.left, top: safeArea.top, width: safeArea.width, height: safeArea.height }} />
+                    </div>
                 </div>
 
                 {/* Ready Button */}

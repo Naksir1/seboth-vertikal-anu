@@ -101,21 +101,32 @@ function OutputPage(): JSX.Element {
         setUploadStatus('Memulai upload ke Cloud...')
 
         try {
-            const sessionId = currentSession?.id || crypto.randomUUID()
-            
-            const mediaToUpload: { type: string; url?: string; path: string; base64Data?: string; filePath?: string; mimeType: string; label: string }[] = []
+            const mediaItems: any[] = []
 
             // 1. Prepare Strip
             if (compositeDataUrl) {
-                mediaToUpload.push({ type: 'photo', path: `${sessionId}/strip.jpg`, base64Data: compositeDataUrl, mimeType: 'image/jpeg', label: 'Photo Strip' })
+                mediaItems.push({
+                    type: 'photo',
+                    destinationPath: `${sessionId}/strip.jpg`,
+                    base64Data: compositeDataUrl,
+                    mimeType: 'image/jpeg',
+                    label: 'Photo Strip',
+                    metadata: { is_strip: true }
+                })
             }
 
             // 2. Prepare GIF
             if (gifDataUrl) {
-                mediaToUpload.push({ type: 'gif', path: `${sessionId}/animation.gif`, base64Data: gifDataUrl, mimeType: 'image/gif', label: 'GIF Animation' })
+                mediaItems.push({
+                    type: 'gif',
+                    destinationPath: `${sessionId}/animation.gif`,
+                    base64Data: gifDataUrl,
+                    mimeType: 'image/gif',
+                    label: 'GIF Animation'
+                })
             }
 
-            // 0. Trigger Local Save (This generates the composite video via FFmpeg)
+            // 0. Trigger Local Save (This generates composite video via FFmpeg and saves local files)
             let composedVideoPath: string | null = null
             if (sessionFrame) {
                 try {
@@ -194,7 +205,13 @@ function OutputPage(): JSX.Element {
             if (videoToPrepare) {
                 setUploadStatus('Menyiapkan media video...')
                 const diskPath = videoToPrepare.replace('file:///', '').replace('file://', '')
-                mediaToUpload.push({ type: 'live', path: `${sessionId}/live.mp4`, filePath: diskPath, mimeType: 'video/mp4', label: 'Live Video' })
+                mediaItems.push({
+                    type: 'live',
+                    destinationPath: `${sessionId}/live.mp4`,
+                    filePath: diskPath,
+                    mimeType: 'video/mp4',
+                    label: 'Live Video'
+                })
                 console.log(`✅ ${composedVideoPath ? 'Composed' : 'Raw'} video prepared via path IPC handler`)
             }
 
@@ -205,85 +222,40 @@ function OutputPage(): JSX.Element {
                     setUploadStatus(`Menyiapkan Foto ${i + 1}/${photos.length}...`)
                     
                     if (photo.imagePath.startsWith('data:')) {
-                        mediaToUpload.push({ 
-                            type: 'photo', path: `${sessionId}/photo_${i + 1}.jpg`, base64Data: photo.imagePath, mimeType: 'image/jpeg', label: `Photo ${i + 1}`
+                        mediaItems.push({ 
+                            type: 'photo', destinationPath: `${sessionId}/photo_${i + 1}.jpg`, base64Data: photo.imagePath, mimeType: 'image/jpeg', label: `Photo ${i + 1}`
                         })
                     } else {
                         const diskPath = photo.imagePath.replace('file:///', '').replace('file://', '')
-                        mediaToUpload.push({ 
-                            type: 'photo', path: `${sessionId}/photo_${i + 1}.jpg`, filePath: diskPath, mimeType: 'image/jpeg', label: `Photo ${i + 1}`
+                        mediaItems.push({ 
+                            type: 'photo', destinationPath: `${sessionId}/photo_${i + 1}.jpg`, filePath: diskPath, mimeType: 'image/jpeg', label: `Photo ${i + 1}`
                         })
                     }
                 } catch (pErr) {
                     console.error(`Failed to handle individual photo ${i}:`, pErr)
                 }
             }
-            console.log(`📸 Ready to upload ${mediaToUpload.length} items`)
+            console.log(`📸 Ready to upload session ${sessionId} (${mediaItems.length} items)`)
 
-            setUploadStatus('Menyimpan sesi ke database...')
-            const { error: dbErr } = await supabase
-                .from('sessions')
-                .upsert({
-                    id: sessionId,
-                    event_name: config.eventName || 'Sebooth Event',
-                    is_claimed: false,
-                    created_at: new Date().toISOString()
-                }, { onConflict: 'id' })
-            
-            if (dbErr) throw dbErr
-
+            setUploadStatus('Mengunggah ke Cloud / Antrean Offline...')
             setCloudSessionId(sessionId)
 
-            let successCount = 0
-            const GCS_BUCKET_NAME = 'sebooth-media-konser'
-            
-            for (let i = 0; i < mediaToUpload.length; i++) {
-                const item = mediaToUpload[i]
-                const progress = `(${i + 1}/${mediaToUpload.length})`
-                setUploadStatus(`Mengunggah ${item.label || item.type} ${progress}...`)
-                
-                try {
-                    const uploadResult = await (window as any).api.cloud.uploadFile({
-                        bucketName: GCS_BUCKET_NAME,
-                        destinationPath: item.path,
-                        filePath: item.filePath,
-                        base64Data: item.base64Data,
-                        mimeType: item.mimeType
-                    });
+            const uploadResult = await (window as any).api.cloud.uploadSession({
+                sessionId,
+                eventName: config.eventName || 'Sebooth Event',
+                bucketName: 'sebooth-media-konser',
+                mediaItems
+            })
 
-                    if (!uploadResult.success || !uploadResult.url) {
-                        console.error(`GCS Storage Error for ${item.type}:`, uploadResult.error)
-                        continue
-                    }
-
-                    const publicUrl = uploadResult.url;
-                    
-                    const { error: insErr } = await supabase.from('media').insert({
-                        session_id: sessionId,
-                        type: item.type,
-                        url: publicUrl,
-                        metadata: item.path.includes('strip.jpg') ? { is_strip: true } : {}
-                    })
-
-                    if (insErr) {
-                        console.error(`DB Insert Error for ${item.type}:`, insErr)
-                    } else {
-                        successCount++
-                    }
-                } catch (loopErr) {
-                    console.error(`Unexpected loop error for ${item.type}:`, loopErr)
-                }
+            if (uploadResult && uploadResult.data) {
+                setUploadStatus(uploadResult.data.message || 'Upload Selesai!')
+            } else {
+                setUploadStatus('Tersimpan Offline (Otomatis Sinkron saat online).')
             }
-
-            setCloudSessionId(sessionId)
-            setUploadStatus(`Upload Selesai! (${successCount}/${mediaToUpload.length} sukses)`)
-            console.log(`✅ Upload Sequence Complete. Success: ${successCount}/${mediaToUpload.length}`)
         } catch (err: any) {
             console.warn('⚠️ Cloud upload deferred to offline retry queue:', err)
-            // Ensure cloudSessionId is set so session navigation and local printing proceed 100% smoothly
-            const fallbackId = currentSession?.id || crypto.randomUUID()
-            setCloudSessionId(fallbackId)
-            setUploadStatus('Media disimpan di antrean offline (akan otomatis di-upload saat online).')
+            setCloudSessionId(sessionId)
+            setUploadStatus('Tersimpan Offline (Otomatis Sinkron saat online).')
             uploadLockRef.current = null
         } finally {
             setIsUploading(false)

@@ -111,6 +111,38 @@ export interface SetupConfig {
     emailService?: string
 }
 
+// Cloud Upload & Queue Types
+export interface MediaUploadItem {
+    id?: string
+    type: 'photo' | 'gif' | 'live'
+    bucketName?: string
+    destinationPath: string // e.g. sessionId/strip.jpg
+    filePath?: string
+    base64Data?: string
+    mimeType: string
+    label?: string
+    metadata?: Record<string, any>
+    status?: 'pending' | 'gcs_uploaded' | 'completed' | 'failed'
+    retries?: number
+}
+
+export interface UploadSessionParams {
+    sessionId: string
+    eventName?: string
+    bucketName?: string
+    mediaItems: MediaUploadItem[]
+}
+
+export interface QueuedSessionUpload {
+    sessionId: string
+    eventName: string
+    createdAt: string
+    addedAt: number
+    sessionDbSynced: boolean
+    mediaItems: MediaUploadItem[]
+}
+
+
 // Single Button Indicator Item Configuration
 export interface ButtonIndicatorItem {
     id: string

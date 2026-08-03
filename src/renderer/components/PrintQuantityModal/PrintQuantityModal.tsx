@@ -19,13 +19,13 @@ export function PrintQuantityModal({ isOpen, onClose, onConfirm, initialQuantity
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
 
-            if (e.key === '1') {
-                e.preventDefault()
-                setQuantity(prev => Math.max(2, prev - 2))
-            } else if (e.key === '3') {
+            if (e.key === '1' || e.key === 'ArrowUp' || e.key === 'ArrowRight') {
                 e.preventDefault()
                 setQuantity(prev => prev + 2)
-            } else if (e.key === '2') {
+            } else if (e.key === '2' || e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
+                e.preventDefault()
+                setQuantity(prev => Math.max(2, prev - 2))
+            } else if (e.key === '3' || e.key === 'Enter') {
                 e.preventDefault()
                 onConfirm(quantity)
                 onClose()

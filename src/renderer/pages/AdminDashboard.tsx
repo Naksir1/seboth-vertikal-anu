@@ -83,6 +83,8 @@ function AdminDashboard(): JSX.Element {
         if (result.success && result.data) setLocalIp(result.data)
     }
 
+    const [isSyncingQueue, setIsSyncingQueue] = useState(false)
+
     const fetchCloudQueue = async () => {
         setIsLoadingQueue(true)
         try {
@@ -90,6 +92,18 @@ function AdminDashboard(): JSX.Element {
             setCloudQueue(q || [])
         } catch(e) {}
         setIsLoadingQueue(false)
+    }
+
+    const handleSyncNow = async () => {
+        setIsSyncingQueue(true)
+        try {
+            await (window as any).api.cloud.syncNow()
+            await fetchCloudQueue()
+        } catch(e) {
+            console.error('Failed to trigger cloud sync:', e)
+        } finally {
+            setIsSyncingQueue(false)
+        }
     }
 
     const fetchPrintData = async () => {
@@ -3038,9 +3052,6 @@ function AdminDashboard(): JSX.Element {
                                         <span className={styles.emailCell}>
                                             {new Date(job.createdAt).toLocaleTimeString()}
                                         </span>
-                                        <span className={styles.printCell} style={{ color: job.sourceDevice && job.sourceDevice !== 'Local' ? '#f59e0b' : '#9ca3af' }}>
-                                            {job.sourceDevice || 'Local'}
-                                        </span>
                                         <span className={styles.galleryCell} style={{ color: job.status === 'COMPLETED' ? '#10b981' : '#ef4444', fontWeight: 'bold' }}>
                                             {job.status === 'COMPLETED' ? '✅ Done' : '❌ Failed'}
                                         </span>
@@ -3056,15 +3067,30 @@ function AdminDashboard(): JSX.Element {
                 {activeTab === 'queue' && (
                      <div className={styles.historyTab}>
                          <div className={styles.historyHeader}>
-                             <h3>☁️ Offline Upload Queue Tracker</h3>
-                             <span className={styles.historyCount}>Pending Items: {cloudQueue.length}</span>
-                             <button
-                                 className={styles.addButton}
-                                 onClick={fetchCloudQueue}
-                                 disabled={isLoadingQueue}
-                             >
-                                 🔄 Refresh
-                             </button>
+                             <div>
+                                 <h3>☁️ Offline Upload Queue Tracker</h3>
+                                 <p style={{ opacity: 0.7, margin: '4px 0 0 0', fontSize: '13px' }}>
+                                     Sesi yang tersimpan offline akan otomatis di-upload dan disinkronkan ke GCS & Supabase saat koneksi internet kembali.
+                                 </p>
+                             </div>
+                             <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                 <span className={styles.historyCount}>Pending Sessions: {cloudQueue.length}</span>
+                                 <button
+                                     className={styles.addButton}
+                                     onClick={fetchCloudQueue}
+                                     disabled={isLoadingQueue || isSyncingQueue}
+                                 >
+                                     🔄 Refresh
+                                 </button>
+                                 <button
+                                     className={styles.addButton}
+                                     onClick={handleSyncNow}
+                                     disabled={isLoadingQueue || isSyncingQueue}
+                                     style={{ background: 'linear-gradient(135deg, #10b981, #059669)', color: 'white', border: 'none' }}
+                                 >
+                                     {isSyncingQueue ? '⏳ Synchronizing...' : '⚡ Sinkronkan Sekarang'}
+                                 </button>
+                             </div>
                          </div>
                          
                          {isLoadingQueue ? (
@@ -3073,30 +3099,69 @@ function AdminDashboard(): JSX.Element {
                                  <p>Loading Pending Offline Uploads...</p>
                              </div>
                          ) : cloudQueue.length > 0 ? (
-                            <div className={styles.historyTable}>
-                                <div className={styles.tableHeader}>
-                                    <span>Type</span>
-                                    <span>Destination (Session)</span>
-                                    <span>Status</span>
-                                    <span>Retries</span>
-                                </div>
-                                {cloudQueue.map((item) => (
-                                    <div key={item.id} className={styles.tableRow}>
-                                        <span className={styles.emailCell}>
-                                            {item.mimeType?.includes('video') ? '🎥 Video' : item.mimeType?.includes('image/gif') ? '🎞️ GIF' : '📸 Photo'}
-                                        </span>
-                                        <span className={styles.printCell} style={{ fontSize: '13px' }}>
-                                            {item.destinationPath || <em style={{ opacity: 0.5 }}>Unknown</em>}
-                                        </span>
-                                        <span className={styles.galleryCell} style={{ color: '#f59e0b', fontWeight: 'bold' }}>
-                                            ⏳ Queued
-                                        </span>
-                                        <span className={styles.dateCell}>
-                                            {item.retryCount || 0} attempts
-                                        </span>
-                                    </div>
-                                ))}
-                            </div>
+                             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
+                                 {cloudQueue.map((session: any) => (
+                                     <div 
+                                         key={session.sessionId} 
+                                         style={{ 
+                                             background: 'var(--color-bg-secondary, #1f2937)', 
+                                             border: '1px solid var(--color-border, #374151)',
+                                             borderRadius: '12px', 
+                                             padding: '16px' 
+                                         }}
+                                     >
+                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', paddingBottom: '10px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                                             <div>
+                                                 <strong style={{ fontSize: '15px', color: '#60a5fa' }}>Sesi ID: {session.sessionId}</strong>
+                                                 <div style={{ fontSize: '12px', opacity: 0.6, marginTop: '2px' }}>
+                                                     Event: {session.eventName || 'Sebooth Event'} • Dibuat: {new Date(session.createdAt || session.addedAt).toLocaleString('id-ID')}
+                                                 </div>
+                                             </div>
+                                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                 <span style={{ 
+                                                     padding: '4px 10px', 
+                                                     borderRadius: '999px', 
+                                                     fontSize: '12px', 
+                                                     fontWeight: 'bold',
+                                                     background: session.sessionDbSynced ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)',
+                                                     color: session.sessionDbSynced ? '#10b981' : '#f59e0b',
+                                                     border: session.sessionDbSynced ? '1px solid #10b981' : '1px solid #f59e0b'
+                                                 }}>
+                                                     {session.sessionDbSynced ? '✅ DB Row Synced' : '⏳ Pending DB Sync'}
+                                                 </span>
+                                             </div>
+                                         </div>
+
+                                         <div className={styles.historyTable} style={{ marginTop: '8px' }}>
+                                             <div className={styles.tableHeader}>
+                                                 <span>Media File</span>
+                                                 <span>Destination Path</span>
+                                                 <span>Status</span>
+                                                 <span>Retries</span>
+                                             </div>
+                                             {(session.mediaItems || []).map((item: any, idx: number) => (
+                                                 <div key={item.id || idx} className={styles.tableRow}>
+                                                     <span className={styles.emailCell}>
+                                                         {item.type === 'live' ? '🎥 Live Video' : item.type === 'gif' ? '🎞️ GIF' : '📸 Photo'} ({item.label || item.type})
+                                                     </span>
+                                                     <span className={styles.printCell} style={{ fontSize: '13px', fontFamily: 'monospace' }}>
+                                                         {item.destinationPath}
+                                                     </span>
+                                                     <span className={styles.galleryCell} style={{ 
+                                                         color: item.status === 'completed' ? '#10b981' : item.status === 'gcs_uploaded' ? '#3b82f6' : '#f59e0b', 
+                                                         fontWeight: 'bold' 
+                                                     }}>
+                                                         {item.status === 'completed' ? '✅ Complete' : item.status === 'gcs_uploaded' ? '☁️ GCS Uploaded' : '⏳ Queued'}
+                                                     </span>
+                                                     <span className={styles.dateCell}>
+                                                         {item.retries || 0} attempts
+                                                     </span>
+                                                 </div>
+                                             ))}
+                                         </div>
+                                     </div>
+                                 ))}
+                             </div>
                          ) : (
                              <div className={styles.emptyState} style={{ padding: '60px 20px' }}>
                                  <p>No Pending Uploads</p>

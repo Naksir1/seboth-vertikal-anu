@@ -61,14 +61,21 @@ namespace CanonHelper
                 }
                 _cameraRef = (IntPtr)handleField.GetValue(_camera);
 
-                // Set SaveTo to Camera-only (1) so the photo is reliably written to the SD card.
+                // Disable autofocus programmatically if possible to speed up trigger
                 try
                 {
-                    _camera.SetProperty(0x00000010, 1);
+                    _camera.DisableAutoFocus();
+                }
+                catch {}
+
+                // Set SaveTo to Camera-only so the photo is reliably written to the SD card.
+                try
+                {
+                    _camera.SavePicturesToCamera();
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("WARNING:Failed to set SaveTo property - " + ex.Message);
+                    throw new Exception("Gagal mengatur penyimpanan kamera. Pastikan menu 'Choose USB connection app' (Pilih aplikasi koneksi USB) di Setup kamera di-set ke 'Canon app(s) for computer' (Apl Canon untuk komputer), dan lensa di-set ke MF (Manual Focus) - " + ex.Message);
                 }
 
                 Console.WriteLine("STATUS:CONNECTED:" + _camera.DeviceDescription);
@@ -347,15 +354,17 @@ namespace CanonHelper
         private static void HandleCapture(string outputPath)
         {
             bool wasLiveViewRunning = false;
+            bool wasTftMode = false;
             lock (_cameraLock)
             {
                 wasLiveViewRunning = _liveViewRunning;
+                wasTftMode = _liveViewTftMode;
             }
 
             try
             {
-                // 1. Suspend live view if running
-                if (wasLiveViewRunning)
+                // 1. Suspend live view if running (ONLY if not in TFT/HDMI mode to keep HDMI feed stable)
+                if (wasLiveViewRunning && !wasTftMode)
                 {
                     lock (_cameraLock)
                     {
@@ -386,7 +395,7 @@ namespace CanonHelper
                     // Get initial newest file on card
                     string initialNewestName = "";
                     ulong initialNewestSize = 0;
-                    FindNewestFile(_cameraRef, ref initialNewestName, ref initialNewestSize);
+                    IntPtr initialNewestRef = FindNewestFile(_cameraRef, ref initialNewestName, ref initialNewestSize);
 
                     // 2. Trigger shutter
                     try
@@ -423,7 +432,16 @@ namespace CanonHelper
                                 found = true;
                                 break;
                             }
+                            else
+                            {
+                                EdsRelease_Pin(pollRef);
+                            }
                         }
+                    }
+
+                    if (initialNewestRef != IntPtr.Zero)
+                    {
+                        EdsRelease_Pin(initialNewestRef);
                     }
 
                     if (found)
@@ -440,6 +458,7 @@ namespace CanonHelper
                         {
                             Console.WriteLine("ERROR:Download failed (0x" + err.ToString("X") + ")");
                         }
+                        EdsRelease_Pin(currentNewestRef);
                     }
                     else
                     {
@@ -454,7 +473,7 @@ namespace CanonHelper
             finally
             {
                 // 6. Resume live view if it was active
-                if (wasLiveViewRunning)
+                if (wasLiveViewRunning && !wasTftMode)
                 {
                     Thread.Sleep(300);
                     if (_liveViewTftMode)
@@ -483,6 +502,7 @@ namespace CanonHelper
                 if (err == 0 && volumeRef != IntPtr.Zero)
                 {
                     FindNewestFileInternal(volumeRef, ref newestRef, ref newestName, ref newestSize);
+                    EdsRelease_Pin(volumeRef);
                 }
             }
             return newestRef;
@@ -507,6 +527,7 @@ namespace CanonHelper
                         if (info.isFolder != 0)
                         {
                             FindNewestFileInternal(childRef, ref newestRef, ref newestName, ref newestSize);
+                            EdsRelease_Pin(childRef);
                         }
                         else
                         {
@@ -514,9 +535,18 @@ namespace CanonHelper
                             {
                                 newestName = info.szFileName;
                                 newestSize = info.Size;
+                                if (newestRef != IntPtr.Zero) EdsRelease_Pin(newestRef);
                                 newestRef = childRef;
                             }
+                            else
+                            {
+                                EdsRelease_Pin(childRef);
+                            }
                         }
+                    }
+                    else
+                    {
+                        EdsRelease_Pin(childRef);
                     }
                 }
             }
@@ -539,7 +569,8 @@ namespace CanonHelper
             try
             {
                 string clean = "";
-                foreach (char c in filename)
+                string nameWithoutExt = Path.GetFileNameWithoutExtension(filename);
+                foreach (char c in nameWithoutExt)
                 {
                     if (char.IsDigit(c)) clean += c;
                 }

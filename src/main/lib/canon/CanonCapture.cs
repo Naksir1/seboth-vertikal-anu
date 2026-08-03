@@ -107,7 +107,16 @@ namespace CanonCapture
                                     found = true;
                                     break;
                                 }
+                                else
+                                {
+                                    EdsRelease_Pin(pollRef);
+                                }
                             }
+                        }
+
+                        if (initialNewestRef != IntPtr.Zero)
+                        {
+                            EdsRelease_Pin(initialNewestRef);
                         }
 
                         if (found)
@@ -125,6 +134,7 @@ namespace CanonCapture
                             {
                                 Console.WriteLine("ERROR: Download failed with error code: 0x" + err.ToString("X"));
                             }
+                            EdsRelease_Pin(currentNewestRef);
                         }
                         else
                         {
@@ -154,6 +164,7 @@ namespace CanonCapture
                 if (err == 0 && volumeRef != IntPtr.Zero)
                 {
                     FindNewestFileInternal(volumeRef, ref newestRef, ref newestName, ref newestSize);
+                    EdsRelease_Pin(volumeRef);
                 }
             }
 
@@ -179,6 +190,7 @@ namespace CanonCapture
                         if (info.isFolder != 0)
                         {
                             FindNewestFileInternal(childRef, ref newestRef, ref newestName, ref newestSize);
+                            EdsRelease_Pin(childRef);
                         }
                         else
                         {
@@ -186,9 +198,18 @@ namespace CanonCapture
                             {
                                 newestName = info.szFileName;
                                 newestSize = info.Size;
+                                if (newestRef != IntPtr.Zero) EdsRelease_Pin(newestRef);
                                 newestRef = childRef;
                             }
+                            else
+                            {
+                                EdsRelease_Pin(childRef);
+                            }
                         }
+                    }
+                    else
+                    {
+                        EdsRelease_Pin(childRef);
                     }
                 }
             }
@@ -213,7 +234,8 @@ namespace CanonCapture
             try
             {
                 string clean = "";
-                foreach (char c in filename)
+                string nameWithoutExt = Path.GetFileNameWithoutExtension(filename);
+                foreach (char c in nameWithoutExt)
                 {
                     if (char.IsDigit(c)) clean += c;
                 }

@@ -9,7 +9,7 @@ import styles from './SharingPage.module.css'
 
 function SharingPage(): JSX.Element {
     const navigate = useNavigate()
-    const { currentSession, endSession } = useSessionStore()
+    const { currentSession, endSession, setPrintQuantity } = useSessionStore()
     const { config } = useAppConfig()
     const { activeTicketNumber, activeTicketId, reset: resetQueue } = useQueueStore()
 
@@ -86,20 +86,22 @@ function SharingPage(): JSX.Element {
     }
 
     const handlePrint = () => {
-        const paidQuantity = currentSession?.printQuantity
-        if (paidQuantity && paidQuantity > 0) {
-            console.log('[SharingPage] Paid quantity found from Payment Gateway:', paidQuantity)
-            console.log('[SharingPage] Navigating to /printing directly with printQuantity:', paidQuantity)
-            navigate('/printing', { state: { printQuantity: paidQuantity } })
+        // If payment gateway is enabled, use the paid print quantity from online payment.
+        // If payment gateway is disabled, open PrintQuantityModal so user/operator can select/increase print quantity for offline payment.
+        if (config.paymentEnabled && currentSession?.printQuantity && currentSession.printQuantity > 0) {
+            console.log('[SharingPage] Payment Gateway enabled. Paid quantity:', currentSession.printQuantity)
+            console.log('[SharingPage] Navigating to /printing directly with printQuantity:', currentSession.printQuantity)
+            navigate('/printing', { state: { printQuantity: currentSession.printQuantity } })
         } else {
+            console.log('[SharingPage] Payment Gateway disabled. Opening PrintQuantityModal for offline print selection.')
             setIsPrintModalOpen(true)
         }
     }
 
     const handlePrintConfirm = (quantity: number) => {
         console.log('[SharingPage] handlePrintConfirm called with quantity:', quantity)
+        setPrintQuantity(quantity)
         console.log('[SharingPage] Navigating to /printing with state:', { printQuantity: quantity })
-        // Navigate to the printing page with quantity
         navigate('/printing', { state: { printQuantity: quantity } })
     }
 

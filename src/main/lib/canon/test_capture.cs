@@ -1,5 +1,7 @@
 using System;
+using System.IO;
 using System.Threading;
+using System.Windows.Forms;
 using Canon.Eos.Framework;
 using Canon.Eos.Framework.Eventing;
 
@@ -21,23 +23,62 @@ class Program
 
                 using (var camera = cameras[0])
                 {
-                    Console.WriteLine("===CONNECTED===" + camera.DeviceName);
+                    Console.WriteLine("===CONNECTED===" + camera.DeviceDescription);
                     
-                    var captureDone = new ManualResetEvent(false);
+                    bool captureDone = false;
                     
                     camera.PictureTaken += (sender, e) =>
                     {
-                        Console.WriteLine("===EVENT_PictureTaken===" + e.ImageData.Length);
-                        System.IO.File.WriteAllBytes("test_capture_cs.jpg", e.ImageData);
-                        captureDone.Set();
+                        try
+                        {
+                            Console.WriteLine("===EVENT_PictureTaken===");
+                            using (Stream stream = e.GetStream())
+                            using (MemoryStream ms = new MemoryStream())
+                            {
+                                stream.CopyTo(ms);
+                                byte[] bytes = ms.ToArray();
+                                Console.WriteLine("Image size: " + bytes.Length + " bytes");
+                                File.WriteAllBytes("test_capture_cs.jpg", bytes);
+                            }
+                            captureDone = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine("===EVENT_ERROR===" + ex.Message);
+                            captureDone = true;
+                        }
                     };
 
-                    camera.SavePicturesToHost(Environment.CurrentDirectory, Environment.CurrentDirectory);
+                    camera.SavePicturesToHost(Environment.CurrentDirectory, "test_capture_prefix");
                     
                     Console.WriteLine("===TRIGGERING===");
-                    camera.TakePicture();
+                    try
+                    {
+                        camera.TakePictureNoAf();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("TakePictureNoAf failed: " + ex.Message + ". Falling back to TakePicture...");
+                        camera.TakePicture();
+                    }
                     
-                    if (captureDone.WaitOne(20000))
+                    // Loop to pump messages and trigger EdsGetEvent
+                    int timeoutCount = 100; // 10 seconds timeout
+                    while (!captureDone && timeoutCount > 0)
+                    {
+                        Application.DoEvents();
+                        // Call native EdsGetEvent if needed
+                        try
+                        {
+                            EdsGetEvent_Pin();
+                        }
+                        catch { }
+                        
+                        Thread.Sleep(100);
+                        timeoutCount--;
+                    }
+
+                    if (captureDone)
                     {
                         Console.WriteLine("===SUCCESS===");
                     }
@@ -53,4 +94,7 @@ class Program
             Console.WriteLine("===EXCEPTION===" + ex.Message);
         }
     }
+
+    [System.Runtime.InteropServices.DllImport("EDSDK.dll", EntryPoint = "EdsGetEvent")]
+    private static extern uint EdsGetEvent_Pin();
 }
