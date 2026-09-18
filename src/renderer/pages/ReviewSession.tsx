@@ -240,7 +240,7 @@ const ReviewSession: React.FC = () => {
                                                         width: '100%',
                                                         height: '100%',
                                                         objectFit: 'cover',
-                                                        transform: `scale(${photo.scale || 1}) scaleX(${isMirrored ? -1 : 1})`,
+                                                        transform: `scale(${photo.scale || 1.0}) scaleX(${isMirrored !== config.mirrorOutput ? -1 : 1})`,
                                                         transformOrigin: 'center center',
                                                         ...filter.style
                                                     }}

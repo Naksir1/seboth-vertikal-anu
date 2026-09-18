@@ -166,6 +166,7 @@ function PhotoReviewPage(): JSX.Element | null {
                                                     src={photo.imagePath}
                                                     alt={`Slot ${slot.id}`}
                                                     className={styles.slotImage}
+                                                    style={{ transform: `scale(${photo.scale || 1.0})`, transformOrigin: 'center center' }}
                                                 />
                                             ) : (
                                                 <div className={styles.emptySlotPlaceholder}>Kosong</div>

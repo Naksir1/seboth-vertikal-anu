@@ -328,11 +328,23 @@ namespace CanonHelper
         {
             lock (_cameraLock)
             {
-                if (_liveViewTimer != null && !string.IsNullOrEmpty(_liveViewPath))
+                if (!string.IsNullOrEmpty(_liveViewPath))
                 {
-                    _camera.LiveViewDevice = (EosLiveViewDevice)3; // Switch to Both so host can poll frames
-                    System.Threading.Thread.Sleep(200);
-                    _liveViewTimer.Start();
+                    try
+                    {
+                        if (!_liveViewRunning)
+                        {
+                            _camera.IsInLiveViewMode = true;
+                            _camera.StartLiveView(true);
+                            _liveViewRunning = true;
+                        }
+                        _camera.LiveViewDevice = (EosLiveViewDevice)3; // Switch to Both so host can poll frames
+                    }
+                    catch {}
+                    if (_liveViewTimer != null)
+                    {
+                        _liveViewTimer.Start();
+                    }
                     Console.WriteLine("STATUS:POLLING_STARTED");
                 }
             }

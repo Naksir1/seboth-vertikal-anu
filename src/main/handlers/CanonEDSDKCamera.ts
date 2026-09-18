@@ -900,15 +900,28 @@ try {
     private recordingSlotId: string | null = null
 
     async startRecordingLivePhoto(slotId: string): Promise<boolean> {
+        if (!this.helperProcess) {
+            console.log('[CanonEDSDK] Helper process not running in startRecordingLivePhoto. Attempting auto-connect...')
+            try {
+                await this.connect('canon_edsdk_0')
+            } catch (err: any) {
+                console.error('[CanonEDSDK] Auto-connect failed in startRecordingLivePhoto:', err.message)
+                return false
+            }
+        }
         if (!this.helperProcess) return false
         
         console.log(`[CanonEDSDK] Starting memory-buffered Live Photo recording for slot: ${slotId}`)
         
-        // Start helper polling in TFT mode if capture card is active
-        const hasCaptureCard = !!configService.getConfig().selectedCameraId
-        if (hasCaptureCard) {
-            await this.startPolling()
-        }
+        // Remove old temp liveview file before starting new recording
+        try {
+            if (existsSync(this.liveViewTempPath)) {
+                unlinkSync(this.liveViewTempPath)
+            }
+        } catch {}
+
+        // ALWAYS start polling in helper process to write edsdk_liveview.jpg frames
+        await this.startPolling()
         
         this.recordedFrames = []
         this.recordingSlotId = slotId
@@ -939,11 +952,8 @@ try {
             this.recordingTimer = null
         }
         
-        // Stop helper polling in TFT mode if capture card is active
-        const hasCaptureCard = !!configService.getConfig().selectedCameraId
-        if (hasCaptureCard) {
-            await this.stopPolling()
-        }
+        // ALWAYS stop polling in helper process when recording finishes
+        await this.stopPolling()
         
         const frames = this.recordedFrames
         this.recordedFrames = []
@@ -986,9 +996,12 @@ try {
                     .input(join(tempDir, 'frame_%d.jpg'))
                     .inputOptions([`-framerate ${fps}`])
                     .outputOptions([
+                        '-vf scale=trunc(iw/4)*2:trunc(ih/4)*2',
                         '-c:v libx264',
                         '-preset veryfast',
                         '-crf 28',
+                        '-maxrate 1200k',
+                        '-bufsize 2400k',
                         '-pix_fmt yuv420p',
                         '-movflags +faststart'
                     ])

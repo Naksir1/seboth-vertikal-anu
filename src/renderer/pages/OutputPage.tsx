@@ -163,12 +163,8 @@ function OutputPage(): JSX.Element {
                         overlay: { path: sessionFrame.overlayPath, filename: 'overlay.png' },
                         mirrorOutput: isMirrored,
                         cameraRotation: config.cameraRotation || 0,
-                        // Capture card videos (EDSDK+HDMI) already have correct orientation
-                        // from the MediaRecorder recording the HDMI stream as-is.
-                        // USB live view videos need rotation/mirror transforms applied.
-                        videoSource: (config.cameraMode === 'edsdk' && config.selectedCameraId)
-                            ? 'capture_card'
-                            : (config.cameraMode === 'edsdk' ? 'usb_liveview' : 'webcam'),
+                        cameraZoom: config.cameraZoom || 1.0,
+                        videoSource: config.cameraMode === 'edsdk' ? 'usb_liveview' : 'webcam',
                         frameConfig: {
                             width: sessionFrame.canvasWidth,
                             height: sessionFrame.canvasHeight,
@@ -189,18 +185,22 @@ function OutputPage(): JSX.Element {
                     })
 
                     if (saveResult.success && saveResult.data) {
-                        const videoFile = (saveResult.data as any[]).find(f => f.filename.startsWith('live_video_'))
+                        const videoFile = (saveResult.data as any[]).find(f => f.filename && f.filename.startsWith('live_video_'))
                         if (videoFile) {
                             composedVideoPath = videoFile.path
-                            console.log('🎬 Composite video produced:', composedVideoPath)
+                            console.log('🎬 Composite video produced for cloud upload:', composedVideoPath)
+                        } else {
+                            console.warn('⚠️ live_video_ file not found in saveResult.data list:', saveResult.data)
                         }
+                    } else {
+                        console.error('⚠️ saveSessionLocally returned unsuccessful:', saveResult)
                     }
                 } catch (saveErr) {
                     console.error('Local save/composite failed:', saveErr)
                 }
             }
 
-            // 3. Prepare Video
+            // 3. Prepare Video (Always prioritize the composed strip video containing all slots and frame template)
             const videoToPrepare = composedVideoPath || liveVideoPath
             if (videoToPrepare) {
                 setUploadStatus('Menyiapkan media video...')
@@ -212,7 +212,7 @@ function OutputPage(): JSX.Element {
                     mimeType: 'video/mp4',
                     label: 'Live Video'
                 })
-                console.log(`✅ ${composedVideoPath ? 'Composed' : 'Raw'} video prepared via path IPC handler`)
+                console.log(`✅ ${composedVideoPath ? 'Composed strip' : 'Fallback raw'} video prepared: ${diskPath}`)
             }
 
             // 4. Prepare Individual Photos
@@ -309,7 +309,7 @@ function OutputPage(): JSX.Element {
                 gctx.fillStyle = '#ffffff'
                 gctx.fillRect(0, 0, gifCanvas.width, gifCanvas.height)
                 gctx.save()
-                if (isMirrored) {
+                if (isMirrored !== config.mirrorOutput) {
                     gctx.translate(gifCanvas.width, 0)
                     gctx.scale(-1, 1)
                 }
@@ -428,7 +428,7 @@ function OutputPage(): JSX.Element {
                     const panX = photo.panX || 0
                     const panY = photo.panY || 0
 
-                    if (isMirrored) {
+                    if (isMirrored !== config.mirrorOutput) {
                         ctx.scale(-1, 1)
                         ctx.translate(-panX, panY)
                     } else {
@@ -546,7 +546,7 @@ function OutputPage(): JSX.Element {
         return () => window.removeEventListener('keydown', handleKeyDown)
     }, [isProcessing, isUploading, handlePrevMedia, handleNextMedia, handleProceed])
 
-    if (!sessionFrame) return null
+    if (!sessionFrame) return <></>
 
     // Calculate dimensions for circular 3D carousel cards (Enlarged selected item size)
     const isPortrait = config.appOrientation === 'portrait'
@@ -625,25 +625,25 @@ function OutputPage(): JSX.Element {
                             }
                             
                             const cameraRotation = config.cameraRotation || 0
-                            const isRotated90or270 = cameraRotation === 90 || cameraRotation === 270
+                            // Canon EDSDK videos are USB liveview frames, so cameraRotation and mirroring must be applied
+                            const effectiveCamRot = cameraRotation
+                            const effectiveMirror = isMirrored
+                            const isRotated90or270 = effectiveCamRot === 90 || effectiveCamRot === 270
 
-                            // Capture card videos (EDSDK+HDMI) are recorded from the
-                            // MediaRecorder stream which already has correct orientation.
-                            // Only USB live view videos need rotation/mirror CSS correction.
-                            const isCaptureCardSource = isVideo && config.cameraMode === 'edsdk' && !!config.selectedCameraId
+                            let camRotTransform = ''
+                            if (isVideo) {
+                                if (effectiveCamRot === 90) {
+                                    camRotTransform = effectiveMirror ? 'rotate(90deg) scaleX(-1)' : 'rotate(270deg)'
+                                } else if (effectiveCamRot === 270) {
+                                    camRotTransform = effectiveMirror ? 'rotate(270deg) scaleX(-1)' : 'rotate(90deg)'
+                                } else if (effectiveCamRot === 180) {
+                                    camRotTransform = effectiveMirror ? 'rotate(180deg) scaleX(-1)' : 'rotate(180deg)'
+                                } else if (effectiveMirror) {
+                                    camRotTransform = 'scaleX(-1)'
+                                }
+                            }
 
-                            const camRotTransform = isCaptureCardSource
-                                ? '' // Capture card video: already correct orientation
-                                : isVideo && isRotated90or270
-                                ? `rotate(${cameraRotation}deg) scaleX(-1)`
-                                : isVideo && cameraRotation === 180
-                                ? `rotate(180deg) scaleX(-1)`
-                                : isVideo && isMirrored
-                                ? `scaleX(-1)`
-                                : ''
-
-                            // For capture card videos, skip dimension swapping from rotation
-                            const effectiveRotated = isCaptureCardSource ? false : isRotated90or270
+                            const effectiveRotated = isVideo && isRotated90or270
 
                             const mediaStyle: React.CSSProperties = {
                                 position: 'absolute',

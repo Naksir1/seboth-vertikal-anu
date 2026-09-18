@@ -52,6 +52,7 @@ export class ImageProcessor {
 
             // We use sharp's resize with fit: 'cover' which does center cropping automatically
             const photoBuffer = await sharp(photo.path)
+                .rotate() // Auto-orient by EXIF metadata
                 .rotate(photo.slot.rotation || 0)
                 .resize({
                     width: Math.round(photo.slot.width),

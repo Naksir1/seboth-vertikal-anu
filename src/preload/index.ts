@@ -138,8 +138,8 @@ const api = {
         fileExists: (filePath: string): Promise<APIResponse<boolean>> =>
             ipcRenderer.invoke('system:file-exists', filePath),
 
-        readFileAsBase64: (filePath: string): Promise<APIResponse<string>> =>
-            ipcRenderer.invoke('system:read-file-base64', filePath),
+        readFileAsBase64: (filePath: string, options?: { mirror?: boolean; cameraRotation?: number; cameraZoom?: number }): Promise<APIResponse<string>> =>
+            ipcRenderer.invoke('system:read-file-base64', filePath, options),
 
         saveDataUrl: (dataUrl: string, filename: string): Promise<APIResponse<string>> =>
             ipcRenderer.invoke('system:save-data-url', dataUrl, filename),
@@ -154,6 +154,7 @@ const api = {
             overlay?: { path: string; filename: string }
             mirrorOutput?: boolean
             cameraRotation?: 0 | 90 | 180 | 270
+            cameraZoom?: number
             frameConfig?: {
                 width: number
                 height: number

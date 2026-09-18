@@ -387,6 +387,8 @@ function CaptureSession(): JSX.Element {
         }
 
         const rotation = config.cameraRotation || 0
+        const shouldMirror = config.mirrorOutput !== undefined ? config.mirrorOutput : true
+        const zoom = config.cameraZoom || 1.0
 
         // If camera is rotated 90° or 270°, swap canvas width and height for portrait aspect
         if (rotation === 90 || rotation === 270) {
@@ -401,32 +403,36 @@ function CaptureSession(): JSX.Element {
         if (!ctx) return null
 
         ctx.save()
+        ctx.translate(canvas.width / 2, canvas.height / 2)
+
         if (rotation === 90) {
-            ctx.translate(canvas.width / 2, canvas.height / 2)
-            ctx.rotate((90 * Math.PI) / 180)
-            ctx.scale(-1, 1)
-            ctx.drawImage(video, -video.videoWidth / 2, -video.videoHeight / 2, video.videoWidth, video.videoHeight)
-        } else if (rotation === 270) {
-            ctx.translate(canvas.width / 2, canvas.height / 2)
             ctx.rotate((270 * Math.PI) / 180)
-            ctx.scale(-1, 1)
-            ctx.drawImage(video, -video.videoWidth / 2, -video.videoHeight / 2, video.videoWidth, video.videoHeight)
+        } else if (rotation === 270) {
+            ctx.rotate((90 * Math.PI) / 180)
         } else if (rotation === 180) {
-            ctx.translate(canvas.width / 2, canvas.height / 2)
             ctx.rotate((180 * Math.PI) / 180)
-            ctx.scale(-1, 1)
-            ctx.drawImage(video, -video.videoWidth / 2, -video.videoHeight / 2, video.videoWidth, video.videoHeight)
-        } else {
-            // Standard 0deg mirror mode
-            ctx.translate(canvas.width, 0)
-            ctx.scale(-1, 1)
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
         }
+
+        if (shouldMirror) {
+            ctx.scale(-1, 1)
+        }
+
+        if (zoom && zoom > 1.0) {
+            ctx.scale(zoom, zoom)
+        }
+
+        ctx.drawImage(
+            video,
+            -video.videoWidth / 2,
+            -video.videoHeight / 2,
+            video.videoWidth,
+            video.videoHeight
+        )
         ctx.restore()
 
         // Return as data URL
         return canvas.toDataURL('image/jpeg', 0.92)
-    }, [config.cameraRotation])
+    }, [config.cameraRotation, config.mirrorOutput, config.cameraZoom])
 
     // Handle countdown or immediate capture
     const startCountdown = useCallback((slotIndex: number) => {
@@ -443,23 +449,20 @@ function CaptureSession(): JSX.Element {
 
         // Start video recording for Live Photo
         const isEdsdkMode = config.cameraMode === 'edsdk';
-        const hasCaptureCard = !!config.selectedCameraId;
         const slot = currentFrame.slots[slotIndex];
 
-        // EDSDK + Capture Card: Use MediaRecorder from capture card stream (uninterrupted)
-        // EDSDK without Capture Card: Use USB live view polling (legacy)
-        // Other modes: Use MediaRecorder from webcam stream
-        if (isEdsdkMode && !hasCaptureCard) {
-            // USB-only EDSDK mode: Use USB live view frame polling
-            console.log('[CaptureSession] Starting USB Live Photo recording (no capture card)...');
+        if (isEdsdkMode) {
+            // Canon EDSDK mode: Use native Canon EDSDK live view frame recording
+            console.log('[CaptureSession] Starting Canon EDSDK Live Photo recording...');
             window.api.camera.startRecordingLivePhoto(slot.id).catch((err: any) => {
-                console.error('[CaptureSession] Failed to start USB Live Photo recording:', err);
+                console.error('[CaptureSession] Failed to start Canon EDSDK Live Photo recording:', err);
             });
         } else if (streamRef.current && !mediaRecorderRef.current) {
             // Capture card stream (EDSDK+HDMI) or standard webcam: Use MediaRecorder
             // This stream is NOT interrupted when the DSLR shutter fires,
             // ensuring all slots get complete video recordings.
             try {
+                const hasCaptureCard = !!config.selectedCameraId;
                 const recordSource = isEdsdkMode && hasCaptureCard ? 'EDSDK+CaptureCard' : 'Webcam';
                 console.log(`[CaptureSession] Starting MediaRecorder Live Photo (source: ${recordSource})...`);
 
@@ -589,7 +592,11 @@ function CaptureSession(): JSX.Element {
                                 // This avoids CORS/sandbox issues with file:// URLs in Electron
                                 try {
                                     console.log('[CaptureSession] Reading captured image to base64:', captureRes.data.imagePath);
-                                    const base64Res = await windowApi.system.readFileAsBase64(captureRes.data.imagePath);
+                                    const base64Res = await windowApi.system.readFileAsBase64(captureRes.data.imagePath, {
+                                        mirror: config.mirrorOutput,
+                                        cameraRotation: config.cameraRotation || 0,
+                                        cameraZoom: config.cameraZoom || 1.0
+                                    });
                                     if (base64Res.success && base64Res.data) {
                                         // Convert base64 to data URL with proper MIME type
                                         dataUrl = `data:image/jpeg;base64,${base64Res.data}`;
@@ -661,29 +668,28 @@ function CaptureSession(): JSX.Element {
 
         // Stop video recording and get video data URL
         const isEdsdkStop = config.cameraMode === 'edsdk';
-        const hasCaptureCardStop = !!config.selectedCameraId;
 
-        // EDSDK without capture card: stop USB live view polling recording
-        if (isEdsdkStop && !hasCaptureCardStop) {
-            console.log('[CaptureSession] Stopping USB Live Photo recording (no capture card)...');
+        if (isEdsdkStop) {
+            console.log('[CaptureSession] Stopping Canon EDSDK Live Photo recording...');
             window.api.camera.stopRecordingLivePhoto(slot.id)
                 .then((res: any) => {
                     if (res.success && res.data) {
                         const videoUrl = `file:///${res.data.replace(/\\/g, '/')}`;
-                        console.log('[CaptureSession] USB Live Photo recorded:', videoUrl);
+                        console.log('[CaptureSession] Canon EDSDK Live Photo recorded:', videoUrl);
                         completeCapture(videoUrl);
                     } else {
-                        console.warn('[CaptureSession] USB Live Photo recording failed or returned empty');
+                        console.warn('[CaptureSession] Canon EDSDK Live Photo recording failed or returned empty');
                         completeCapture();
                     }
                 })
                 .catch((err: any) => {
-                    console.error('[CaptureSession] Error compiling USB Live Photo:', err);
+                    console.error('[CaptureSession] Error compiling Canon EDSDK Live Photo:', err);
                     completeCapture();
                 });
         } else if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
             // Capture card (EDSDK+HDMI) or webcam: stop MediaRecorder
             const recorder = mediaRecorderRef.current
+            const hasCaptureCardStop = !!config.selectedCameraId;
             const recordSource = isEdsdkStop && hasCaptureCardStop ? 'EDSDK+CaptureCard' : 'Webcam';
             console.log(`[CaptureSession] Stopping MediaRecorder Live Photo (source: ${recordSource})...`);
 
@@ -858,8 +864,8 @@ function CaptureSession(): JSX.Element {
     const offsetY = config.cameraOffsetY || 0;
     const scaleYVal = config.cameraScaleY !== undefined ? config.cameraScaleY : 1.0;
     
-    // For capture card video (with default 0.75 squeeze correction if not overridden)
-    const scaleXCardVal = config.cameraScaleX !== undefined ? config.cameraScaleX : (config.selectedCameraId ? 0.75 : 1.0);
+    // For capture card video (default 1.0)
+    const scaleXCardVal = config.cameraScaleX !== undefined ? config.cameraScaleX : 1.0;
     // For standard webcam/image preview (default 1.0)
     const scaleXStandardVal = config.cameraScaleX !== undefined ? config.cameraScaleX : 1.0;
 
@@ -1413,14 +1419,14 @@ function CaptureSession(): JSX.Element {
                         <div style={{ marginBottom: '15px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
                                 <label>↔️ Lebar Video (Scale X)</label>
-                                <span>{Math.round((config.cameraScaleX !== undefined ? config.cameraScaleX : (config.selectedCameraId ? 0.75 : 1.0)) * 100)}%</span>
+                                <span>{Math.round((config.cameraScaleX !== undefined ? config.cameraScaleX : 1.0) * 100)}%</span>
                             </div>
                             <input
                                 type="range"
                                 min="0.5"
                                 max="2.0"
                                 step="0.01"
-                                value={config.cameraScaleX !== undefined ? config.cameraScaleX : (config.selectedCameraId ? 0.75 : 1.0)}
+                                value={config.cameraScaleX !== undefined ? config.cameraScaleX : 1.0}
                                 onChange={(e) => updateConfig({ cameraScaleX: parseFloat(e.target.value) })}
                                 style={{ width: '100%', cursor: 'pointer' }}
                             />
@@ -1482,7 +1488,7 @@ function CaptureSession(): JSX.Element {
                             <button
                                 onClick={() => updateConfig({
                                     cameraZoom: 1.0,
-                                    cameraScaleX: config.selectedCameraId ? 0.75 : 1.0,
+                                    cameraScaleX: 1.0,
                                     cameraScaleY: 1.0,
                                     cameraOffsetX: 0,
                                     cameraOffsetY: 0

@@ -111,14 +111,40 @@ export function registerSystemHandlers(ipcMain: IpcMain): void {
         return { success: true, data: existsSync(filePath) }
     })
 
-    // Read file as base64 string
-    ipcMain.handle('system:read-file-base64', async (_, filePath: string): Promise<APIResponse<string>> => {
+    // Read file as base64 string (with optional EXIF auto-orientation, camera rotation & mirror)
+    ipcMain.handle('system:read-file-base64', async (_, filePath: string, options?: { mirror?: boolean; cameraRotation?: number; cameraZoom?: number }): Promise<APIResponse<string>> => {
         try {
             if (!existsSync(filePath)) {
                 return { success: false, error: `File not found: ${filePath}` }
             }
-            const buffer = readFileSync(filePath)
-            return { success: true, data: buffer.toString('base64') }
+            try {
+                let img = sharp(filePath).rotate() // Auto-orient by EXIF metadata
+                if (options?.cameraRotation) {
+                    img = img.rotate(options.cameraRotation)
+                }
+                if (options?.mirror) {
+                    img = img.flop()
+                }
+                const zoom = options?.cameraZoom
+                if (zoom && zoom > 1.0) {
+                    const tempBuf = await img.toBuffer()
+                    let zoomImg = sharp(tempBuf)
+                    const metadata = await zoomImg.metadata()
+                    if (metadata.width && metadata.height) {
+                        const cropWidth = Math.round(metadata.width / zoom)
+                        const cropHeight = Math.round(metadata.height / zoom)
+                        const left = Math.round((metadata.width - cropWidth) / 2)
+                        const top = Math.round((metadata.height - cropHeight) / 2)
+                        img = zoomImg.extract({ left, top, width: cropWidth, height: cropHeight })
+                    }
+                }
+                const buffer = await img.jpeg({ quality: 92 }).toBuffer()
+                return { success: true, data: buffer.toString('base64') }
+            } catch (sharpErr) {
+                // Fallback to raw buffer read if sharp processing fails
+                const buffer = readFileSync(filePath)
+                return { success: true, data: buffer.toString('base64') }
+            }
         } catch (error) {
             const err = error as Error
             return { success: false, error: err.message }
@@ -232,6 +258,7 @@ export function registerSystemHandlers(ipcMain: IpcMain): void {
         overlay?: { path: string; filename: string }
         mirrorOutput?: boolean
         cameraRotation?: 0 | 90 | 180 | 270
+        cameraZoom?: number
         videoSource?: 'capture_card' | 'usb_liveview' | 'webcam'
         frameConfig?: {
             width: number
@@ -293,15 +320,9 @@ export function registerSystemHandlers(ipcMain: IpcMain): void {
                 if (photo.path.startsWith('data:')) {
                     const matches = photo.path.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/)
                     if (matches) {
-                        let buffer = Buffer.from(matches[2], 'base64')
+                        const buffer = Buffer.from(matches[2], 'base64')
                         const destPath = join(baseDir, photo.filename)
-                        if (params.mirrorOutput) {
-                            try {
-                                buffer = Buffer.from(await sharp(buffer).flop().toBuffer())
-                            } catch (sharpErr) {
-                                console.error('Failed to mirror webcam photo base64:', sharpErr)
-                            }
-                        }
+                        // Data URL photos captured via renderer are already normalized (upright and mirrored/non-mirrored)
                         writeFileSync(destPath, buffer)
                         savedFiles.push({ path: destPath, filename: photo.filename, mimeType: 'image/jpeg' })
                     }
@@ -310,14 +331,30 @@ export function registerSystemHandlers(ipcMain: IpcMain): void {
                     const cleanUrl = photo.path.startsWith('file:///') ? decodeURIComponent(new URL(photo.path).pathname.substring(process.platform === 'win32' ? 1 : 0)) : decodeURIComponent(photo.path)
                     if (existsSync(cleanUrl)) {
                         const destPath = join(baseDir, photo.filename)
-                        if (params.mirrorOutput) {
-                            try {
-                                await sharp(cleanUrl).flop().toFile(destPath)
-                            } catch (sharpErr) {
-                                console.error('Failed to mirror local photo with sharp:', sharpErr)
-                                copyFileSync(cleanUrl, destPath)
+                        try {
+                            let img = sharp(cleanUrl).rotate() // Auto-orient by EXIF metadata
+                            if (params.cameraRotation) {
+                                img = img.rotate(params.cameraRotation)
                             }
-                        } else {
+                            if (params.mirrorOutput) {
+                                img = img.flop()
+                            }
+                            const zoom = params.cameraZoom
+                            if (zoom && zoom > 1.0) {
+                                const tempBuf = await img.toBuffer()
+                                let zoomImg = sharp(tempBuf)
+                                const metadata = await zoomImg.metadata()
+                                if (metadata.width && metadata.height) {
+                                    const cropWidth = Math.round(metadata.width / zoom)
+                                    const cropHeight = Math.round(metadata.height / zoom)
+                                    const left = Math.round((metadata.width - cropWidth) / 2)
+                                    const top = Math.round((metadata.height - cropHeight) / 2)
+                                    img = zoomImg.extract({ left, top, width: cropWidth, height: cropHeight })
+                                }
+                            }
+                            await img.jpeg({ quality: 95 }).toFile(destPath)
+                        } catch (sharpErr) {
+                            console.error('Failed to process local photo with sharp:', sharpErr)
                             copyFileSync(cleanUrl, destPath)
                         }
                         savedFiles.push({ path: destPath, filename: photo.filename, mimeType: 'image/jpeg' })
@@ -382,7 +419,7 @@ export function registerSystemHandlers(ipcMain: IpcMain): void {
                                     })
                                     if (existsSync(fallbackVideoPath)) {
                                         console.log(`[SaveSession] Generated fallback static video for slot ${i} from photo`)
-                                        validInputs.push({ path: fallbackVideoPath, slot, index: validInputs.length })
+                                        validInputs.push({ path: fallbackVideoPath, slot, index: validInputs.length, isFallback: true } as any)
                                     }
                                 } catch (ffErr) {
                                     console.warn(`[SaveSession] Failed to generate fallback video for slot ${i}:`, ffErr)
@@ -425,43 +462,44 @@ export function registerSystemHandlers(ipcMain: IpcMain): void {
                             // Construct complex filter graph
                             let filterGraph = ''
 
-                            // Determine if we should apply camera rotation/mirror transforms.
-                            // Capture card videos already have correct orientation (recorded from
-                            // the HDMI stream which matches what the user sees on screen),
-                            // so we SKIP cameraRotation and hflip to avoid double-transform.
-                            const isCaptureCardVideo = params.videoSource === 'capture_card'
-                            const camRot = isCaptureCardVideo ? 0 : (params.cameraRotation || 0)
-                            const shouldMirror = isCaptureCardVideo ? false : !!params.mirrorOutput
+                            // Determine camera physical rotation (0, 90, 180, 270) and mirror setting.
+                            const camRot = params.cameraRotation || 0
+                            const shouldMirror = !!params.mirrorOutput
 
                             let camRotFilter = ''
                             if (camRot === 90) {
-                                camRotFilter = 'transpose=1' // 90 deg CW
+                                camRotFilter = 'transpose=2' // 90 deg CCW (aligns with canvas -90° rotation so head stays at top)
                             } else if (camRot === 270) {
-                                camRotFilter = 'transpose=2' // 90 deg CCW
+                                camRotFilter = 'transpose=1' // 90 deg CW
                             } else if (camRot === 180) {
                                 camRotFilter = 'hflip,vflip' // 180 deg
                             }
 
-                            validInputs.forEach((input, i) => {
+                            validInputs.forEach((input: any, i) => {
                                 const w = Math.round(input.slot.width)
                                 const h = Math.round(input.slot.height)
                                 const rot = input.slot.rotation || 0
                                 const rotRad = `(${rot}*PI/180)`
 
-                                // 1. Rotate raw video by camera physical tilt if mounted sideways
-                                // 2. Scale video so it fills W x H straight (object-fit: cover)
-                                // 3. Apply mirror if requested
-                                // 4. Rotate by frame slot rotation
                                 const rotFilter = rot ? `rotate=${rotRad}:ow='iw*abs(cos(${rotRad}))+ih*abs(sin(${rotRad}))':oh='iw*abs(sin(${rotRad}))+ih*abs(cos(${rotRad}))':c=black@0.0` : ''
 
                                 let inputPipeline = `[${i + 1}:v]format=yuva420p`
-                                if (camRotFilter) {
-                                    inputPipeline += `,${camRotFilter}`
+
+                                // Static fallback videos generated from photos are ALREADY upright & mirrored in photo pipeline.
+                                // We ONLY apply raw stream mirror and camera physical rotation to REAL recorded videos!
+                                if (!input.isFallback) {
+                                    if (camRotFilter) {
+                                        inputPipeline += `,${camRotFilter}`
+                                    }
+                                    if (shouldMirror) {
+                                        inputPipeline += `,hflip`
+                                    }
+                                    if (params.cameraZoom && params.cameraZoom > 1.0) {
+                                        inputPipeline += `,crop=iw/${params.cameraZoom}:ih/${params.cameraZoom}`
+                                    }
                                 }
+
                                 inputPipeline += `,scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}`
-                                if (shouldMirror) {
-                                    inputPipeline += `,hflip`
-                                }
                                 if (rotFilter) {
                                     inputPipeline += `,${rotFilter}`
                                 }
@@ -535,7 +573,7 @@ export function registerSystemHandlers(ipcMain: IpcMain): void {
                             }
 
                             command
-                                .complexFilter(filterGraph, finalNode)
+                                .complexFilter(filterGraph, 'out')
                                 .outputOptions('-c:v libx264')
                                 .outputOptions('-preset veryfast')
                                 .outputOptions('-crf 28')
@@ -571,21 +609,24 @@ export function registerSystemHandlers(ipcMain: IpcMain): void {
                         const mp4Filename = video.filename.replace(/\.webm$/, '.mp4')
                         const destPath = join(baseDir, mp4Filename)
 
-                        const isCaptureCardLegacy = params.videoSource === 'capture_card'
-                        const camRot = isCaptureCardLegacy ? 0 : (params.cameraRotation || 0)
+                        // For capture_card sources, skip rotation/mirror (already correct orientation)
+                        const isCaptureCardIndiv = params.videoSource === 'capture_card'
+                        const camRot = params.cameraRotation || 0
                         let camRotFilter = ''
                         if (camRot === 90) {
-                            camRotFilter = 'transpose=1'
-                        } else if (camRot === 270) {
                             camRotFilter = 'transpose=2'
+                        } else if (camRot === 270) {
+                            camRotFilter = 'transpose=1'
                         } else if (camRot === 180) {
                             camRotFilter = 'hflip,vflip'
                         }
 
                         let videoFilter = ''
-                        if (camRotFilter) videoFilter = camRotFilter
-                        if (!isCaptureCardLegacy && params.mirrorOutput) {
-                            videoFilter += videoFilter ? ',hflip' : 'hflip'
+                        if (camRotFilter) {
+                            videoFilter = camRotFilter
+                        }
+                        if (params.mirrorOutput) {
+                            videoFilter += videoFilter ? `,hflip` : 'hflip'
                         }
 
                         // If source is mp4 and needs no transformation, copy directly

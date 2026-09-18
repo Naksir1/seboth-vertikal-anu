@@ -95,7 +95,16 @@ export class ConfigService {
                 const data = fs.readFileSync(this.configPath, 'utf-8')
                 const diskConfig = JSON.parse(data)
                 // Merge with default to catch any newly added schema fields
-                this.config = { ...this.defaultConfig, ...diskConfig }
+                this.config = {
+                    ...this.defaultConfig,
+                    ...diskConfig,
+                    cameraZoom: 1.0,
+                    cameraScaleX: 1.0,
+                    cameraScaleY: 1.0,
+                    cameraOffsetX: 0,
+                    cameraOffsetY: 0
+                }
+                this.saveConfig()
             } else {
                 this.config = this.defaultConfig
                 this.saveConfig()
