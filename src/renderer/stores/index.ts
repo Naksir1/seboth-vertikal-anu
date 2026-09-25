@@ -79,6 +79,10 @@ const defaultConfig: AppConfig = {
     customBgPortrait: '',
     customBgLandscapeType: undefined,
     customBgPortraitType: undefined,
+    // Live Cam Overlay
+    liveCamEnabled: false,
+    liveCamOverlayPath: '',
+    liveCamOverlayOpacity: 50,
     // Remote Printing (Double Device)
     printServerEnabled: false,
     printClientEnabled: false,

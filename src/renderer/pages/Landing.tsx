@@ -20,7 +20,7 @@ function Landing(): JSX.Element {
     const navigate = useNavigate()
     const { cameras, selectedCamera, setCameras, selectCamera, setConnected, isConnected } = useCameraStore()
     const { frames, setActiveFrame } = useFrameStore()
-    const { config } = useAppConfig()
+    const { config, updateConfig } = useAppConfig()
 
     const isPortrait = config.appOrientation === 'portrait'
     const customBg = isPortrait ? config.customBgPortrait : config.customBgLandscape
@@ -39,7 +39,11 @@ function Landing(): JSX.Element {
     // Live Camera Background States
     const videoRef = useRef<HTMLVideoElement>(null)
     const streamRef = useRef<MediaStream | null>(null)
-    const [liveCameraEnabled, setLiveCameraEnabled] = useState(false)
+    const liveCameraEnabled = !!config.liveCamEnabled
+    const setLiveCameraEnabled = (val: boolean | ((prev: boolean) => boolean)) => {
+        const newVal = typeof val === 'function' ? val(!!config.liveCamEnabled) : val
+        updateConfig({ liveCamEnabled: newVal })
+    }
     const [isCameraLoading, setIsCameraLoading] = useState(false)
 
     // Check if video exists (simple check via extension or just try loading)
@@ -92,38 +96,85 @@ function Landing(): JSX.Element {
 
                 console.log('[Landing] Requesting camera access...')
 
-                const videoConstraints: MediaTrackConstraints = {
-                    width: { ideal: 1920, min: 640 },
-                    height: { ideal: 1080, min: 480 },
-                }
-
-                if (config.selectedCameraId) {
-                    videoConstraints.deviceId = { exact: config.selectedCameraId }
-                } else {
-                    videoConstraints.facingMode = 'user'
-                }
-
-                let stream: MediaStream
+                // List available devices for debugging
                 try {
-                    stream = await navigator.mediaDevices.getUserMedia({
-                        video: videoConstraints,
-                        audio: false
-                    })
-                } catch (primaryErr) {
-                    if (config.selectedCameraId) {
-                        console.warn('[Landing] Failed with exact deviceId, trying fallback without deviceId:', primaryErr)
+                    const devices = await navigator.mediaDevices.enumerateDevices()
+                    const videoDevices = devices.filter(d => d.kind === 'videoinput')
+                    console.log('[Landing] Available video devices:', videoDevices.map(d => ({ id: d.deviceId, label: d.label })))
+                } catch (enumErr) {
+                    console.warn('[Landing] Could not enumerate devices:', enumErr)
+                }
+
+                let stream: MediaStream | null = null
+
+                // Attempt 1: Exact deviceId + HD resolution
+                if (config.selectedCameraId) {
+                    try {
+                        console.log('[Landing] Attempt 1: exact deviceId + HD')
                         stream = await navigator.mediaDevices.getUserMedia({
-                            video: { width: { ideal: 1920, min: 640 }, height: { ideal: 1080, min: 480 } },
+                            video: {
+                                deviceId: { exact: config.selectedCameraId },
+                                width: { ideal: 1920, min: 640 },
+                                height: { ideal: 1080, min: 480 },
+                            },
                             audio: false
                         })
-                    } else {
-                        throw primaryErr
+                    } catch (err1) {
+                        console.warn('[Landing] Attempt 1 failed:', err1)
+                    }
+                }
+
+                // Attempt 2: Preferred deviceId, no min constraints
+                if (!stream && config.selectedCameraId) {
+                    try {
+                        console.log('[Landing] Attempt 2: preferred deviceId, no min resolution')
+                        stream = await navigator.mediaDevices.getUserMedia({
+                            video: {
+                                deviceId: { ideal: config.selectedCameraId },
+                                width: { ideal: 1280 },
+                                height: { ideal: 720 },
+                            },
+                            audio: false
+                        })
+                    } catch (err2) {
+                        console.warn('[Landing] Attempt 2 failed:', err2)
+                    }
+                }
+
+                // Attempt 3: Any camera with ideal resolution (no deviceId)
+                if (!stream) {
+                    try {
+                        console.log('[Landing] Attempt 3: any camera, ideal resolution')
+                        stream = await navigator.mediaDevices.getUserMedia({
+                            video: {
+                                width: { ideal: 1280 },
+                                height: { ideal: 720 },
+                            },
+                            audio: false
+                        })
+                    } catch (err3) {
+                        console.warn('[Landing] Attempt 3 failed:', err3)
+                    }
+                }
+
+                // Attempt 4: Bare minimum — just video: true
+                if (!stream) {
+                    try {
+                        console.log('[Landing] Attempt 4: bare minimum video:true')
+                        stream = await navigator.mediaDevices.getUserMedia({
+                            video: true,
+                            audio: false
+                        })
+                    } catch (err4) {
+                        console.error('[Landing] Attempt 4 failed (all attempts exhausted):', err4)
+                        throw new Error('Could not access any camera. Make sure a camera is connected and not in use by another application.')
                     }
                 }
 
                 console.log('[Landing] Camera stream acquired:', {
                     videoTracks: stream.getVideoTracks().length,
-                    audioTracks: stream.getAudioTracks().length
+                    trackLabel: stream.getVideoTracks()[0]?.label,
+                    settings: stream.getVideoTracks()[0]?.getSettings()
                 })
 
                 streamRef.current = stream
@@ -355,6 +406,16 @@ function Landing(): JSX.Element {
                     />
                 )
             })()}
+
+            {/* ── LIVE CAM OVERLAY PNG ── */}
+            {liveCameraEnabled && config.liveCamOverlayPath && (
+                <img
+                    src={formatFilePath(config.liveCamOverlayPath)}
+                    alt="Live Cam Overlay"
+                    className={styles.liveCamOverlay}
+                    style={{ opacity: (config.liveCamOverlayOpacity ?? 50) / 100 }}
+                />
+            )}
 
             {/* ── CUSTOM BACKGROUND (IMAGE OR VIDEO) ── */}
             {!liveCameraEnabled && hasCustomBg && (

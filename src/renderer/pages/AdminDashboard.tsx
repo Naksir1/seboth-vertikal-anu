@@ -1505,6 +1505,145 @@ function AdminDashboard(): JSX.Element {
                             </div>
 
                             <div className={styles.timerCard} style={{ gridColumn: '1 / -1' }}>
+                                <h3>🖼️ Live Cam Overlay PNG</h3>
+                                <p>Upload a PNG image (with transparency) to overlay on top of the live camera background on the Home screen. Adjust the opacity to blend the overlay with the camera feed.</p>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '20px' }}>
+
+                                    {/* Overlay Upload Row */}
+                                    <div className={styles.bgSettingRow}>
+                                        <div className={styles.bgSettingInfo}>
+                                            <h4 className={styles.bgSettingTitle}>📄 Overlay Image</h4>
+                                            <span className={styles.bgSettingPath}>
+                                                {config.liveCamOverlayPath
+                                                    ? `Selected: ${config.liveCamOverlayPath.split('/').pop() || config.liveCamOverlayPath.split('\\').pop()}`
+                                                    : 'No overlay set'
+                                                }
+                                            </span>
+                                        </div>
+                                        <div className={styles.bgSettingActions}>
+                                            <button
+                                                className={`${styles.bgSettingBtn} ${styles.bgSettingBtnPrimary}`}
+                                                onClick={async () => {
+                                                    if (!(window as any).api) {
+                                                        alert('Overlay upload is only available when configuring directly on the photobooth machine.')
+                                                        return
+                                                    }
+                                                    const result = await (window as any).api.system.openFileDialog({
+                                                        title: 'Select Overlay PNG',
+                                                        filters: [{ name: 'PNG Images', extensions: ['png'] }]
+                                                    })
+                                                    if (result.success && result.data && result.data.length > 0) {
+                                                        const sourcePath = result.data[0]
+                                                        try {
+                                                            const userDataPathRes = await (window as any).api.system.getUserDataPath()
+                                                            if (userDataPathRes.success && userDataPathRes.data) {
+                                                                const destFolder = `${userDataPathRes.data}/overlays`
+                                                                const fileName = `overlay_${Date.now()}.png`
+                                                                const destPath = `${destFolder}/${fileName}`
+                                                                const copyRes = await (window as any).api.system.copyFile(sourcePath, destPath)
+                                                                if (copyRes.success) {
+                                                                    updateConfig({ liveCamOverlayPath: destPath })
+                                                                } else {
+                                                                    console.error('Failed to copy overlay:', copyRes.error)
+                                                                    updateConfig({ liveCamOverlayPath: sourcePath })
+                                                                }
+                                                            }
+                                                        } catch (e) {
+                                                            console.error('Error during overlay upload:', e)
+                                                            updateConfig({ liveCamOverlayPath: sourcePath })
+                                                        }
+                                                    }
+                                                }}
+                                            >
+                                                Upload PNG
+                                            </button>
+                                            {config.liveCamOverlayPath && (
+                                                <button
+                                                    className={`${styles.bgSettingBtn} ${styles.bgSettingBtnDanger}`}
+                                                    onClick={() => updateConfig({ liveCamOverlayPath: '' })}
+                                                >
+                                                    Clear
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Overlay Preview */}
+                                    {config.liveCamOverlayPath && (
+                                        <div style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '16px',
+                                            padding: '12px',
+                                            background: 'rgba(255,255,255,0.05)',
+                                            borderRadius: '8px',
+                                            border: '1px solid rgba(255,255,255,0.1)'
+                                        }}>
+                                            <div style={{
+                                                width: '120px',
+                                                height: '80px',
+                                                borderRadius: '6px',
+                                                overflow: 'hidden',
+                                                background: 'repeating-conic-gradient(#808080 0% 25%, #404040 0% 50%) 50% / 16px 16px',
+                                                flexShrink: 0,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center'
+                                            }}>
+                                                <img
+                                                    src={(() => {
+                                                        const p = config.liveCamOverlayPath || ''
+                                                        if (p.startsWith('http') || p.startsWith('./') || p.startsWith('data:')) return p
+                                                        const n = p.replace(/\\/g, '/')
+                                                        return n.startsWith('/') ? `file://${n}` : `file:///${n}`
+                                                    })()}
+                                                    alt="Overlay Preview"
+                                                    style={{
+                                                        maxWidth: '100%',
+                                                        maxHeight: '100%',
+                                                        objectFit: 'contain',
+                                                        opacity: (config.liveCamOverlayOpacity ?? 50) / 100
+                                                    }}
+                                                />
+                                            </div>
+                                            <div style={{ fontSize: '12px', color: '#9ca3af' }}>
+                                                Preview ditampilkan di atas background checkerboard agar transparansi terlihat.
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Opacity Slider */}
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                        <label style={{ fontSize: '14px', fontWeight: 600, color: '#e5e7eb' }}>
+                                            🔆 Opacity: {config.liveCamOverlayOpacity ?? 50}%
+                                        </label>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                            <span style={{ fontSize: '12px', color: '#6b7280', minWidth: '32px' }}>0%</span>
+                                            <input
+                                                type="range"
+                                                min={0}
+                                                max={100}
+                                                step={1}
+                                                value={config.liveCamOverlayOpacity ?? 50}
+                                                onChange={(e) => updateConfig({ liveCamOverlayOpacity: Number(e.target.value) })}
+                                                style={{
+                                                    flex: 1,
+                                                    height: '6px',
+                                                    accentColor: '#8b5cf6',
+                                                    cursor: 'pointer'
+                                                }}
+                                            />
+                                            <span style={{ fontSize: '12px', color: '#6b7280', minWidth: '38px' }}>100%</span>
+                                        </div>
+                                        <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                                            Atur opacity overlay. 0% = sepenuhnya transparan, 100% = sepenuhnya terlihat.
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </div>
+
+                            <div className={styles.timerCard} style={{ gridColumn: '1 / -1' }}>
                                 <h3>🔮 Auto Mirror Output</h3>
                                 <p>Set default mirror mode (flop horizontally) for all photo and video outputs</p>
                                 <div className={styles.timerToggle}>

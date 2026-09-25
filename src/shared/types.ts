@@ -239,6 +239,11 @@ export interface AppConfig {
     customBgLandscapeType?: 'image' | 'video'
     customBgPortraitType?: 'image' | 'video'
 
+    // Live Cam Overlay Settings
+    liveCamEnabled?: boolean      // Whether live cam background is active on the Home screen (persists across navigation)
+    liveCamOverlayPath?: string   // File path to PNG overlay displayed on top of live cam background
+    liveCamOverlayOpacity?: number // Opacity of the overlay (0 = fully transparent, 100 = fully opaque)
+
     // Remote Printing (Double Device)
     printServerEnabled: boolean   // true = this device acts as a print server (accepts remote jobs)
     printClientEnabled: boolean   // true = this device sends print jobs to a remote print server
